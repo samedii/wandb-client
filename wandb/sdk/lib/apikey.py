@@ -9,7 +9,7 @@ import sys
 import textwrap
 from urllib.parse import urlparse
 
-import requests
+import requests.utils
 import wandb
 from wandb.apis import InternalApi
 from wandb.errors import term

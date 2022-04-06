@@ -1118,6 +1118,12 @@ class Settings:
         if unknown_properties:
             raise KeyError(f"Unknown settings: {unknown_properties}")
         # only if all keys are valid, update them
+
+        # update base_url first (if provided), as api_key validation depends on it
+        base_url = settings.pop("base_url", None)
+        if base_url is not None:
+            self.__dict__["base_url"].update(base_url, source)
+
         for key, value in settings.items():
             self.__dict__[key].update(value, source)
 
