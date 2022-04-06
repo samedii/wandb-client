@@ -591,6 +591,10 @@ The `Settings` object:
     (and so does not require any validation etc.), define a hook (which does not have to depend on the setting's value)
     and use `"auto_hook": True` in the template dictionary (see e.g. the `wandb_dir` setting).
 - Add tests for the new setting to `tests/wandb_settings_test.py`.
+- If a setting validator depends on another setting, special care must be taken to ensure that 
+  certain operations with the `wandb.Settings` object 
+  (namely, `__init__`, `copy`, `update`, and `_apply_settings`) are performed in the correct order.
+  For reference, see how the `base_url` setting is handled (the `api_key` validator depends on it).
 
 ### Data to be synced to server is fully validated
 
