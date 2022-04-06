@@ -1001,6 +1001,10 @@ class Settings:
 
             # raise TypeError(f"Got unexpected arguments: {unexpected_arguments}")
 
+        base_url = kwargs.pop("base_url", None)
+        if base_url is not None:
+            self.update({"base_url": base_url}, source=Source.BASE)
+
         for k, v in kwargs.items():
             # todo: double-check this logic:
             source = Source.RUN if self.__dict__[k].is_policy else Source.BASE
@@ -1048,6 +1052,10 @@ class Settings:
         # get attributes that are instances of the Property class:
         attributes = {k: v for k, v in self.__dict__.items() if isinstance(v, Property)}
         new = Settings()
+        # update base_url first
+        base_url = attributes.pop("base_url", None)
+        if base_url._value is not None:
+            new.update({"base_url": base_url._value}, source=base_url.source)
         for k, v in attributes.items():
             # make sure to use the raw property value (v._value),
             # not the potential result of runtime hooks applied to it (v.value)
@@ -1160,6 +1168,10 @@ class Settings:
         attributes = {
             k: v for k, v in settings.__dict__.items() if isinstance(v, Property)
         }
+        base_url = attributes.pop("base_url", None)
+        if base_url._value is not None:
+            self.update({"base_url": base_url._value}, source=base_url.source)
+
         for k, v in attributes.items():
             # note that only the same/higher priority settings are propagated
             self.update({k: v._value}, source=v.source)
