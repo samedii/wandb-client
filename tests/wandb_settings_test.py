@@ -959,9 +959,7 @@ def test_program_python_m():
 
 def test_local_api_key_validation():
     with pytest.raises(UsageError):
-        wandb.Settings(
-            api_key="local-87eLxjoRhY6u2ofg63NAJo7rVYHZo4NGACOvpSsF",
-        )
+        wandb.Settings(api_key="local-87eLxjoRhY6u2ofg63NAJo7rVYHZo4NGACOvpSsF",)
     s = wandb.Settings(
         api_key="local-87eLxjoRhY6u2ofg63NAJo7rVYHZo4NGACOvpSsF",
         base_url="https://api.wandb.test",

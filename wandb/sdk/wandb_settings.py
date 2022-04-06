@@ -1054,7 +1054,7 @@ class Settings:
         new = Settings()
         # update base_url first
         base_url = attributes.pop("base_url", None)
-        if base_url._value is not None:
+        if base_url and base_url._value is not None:
             new.update({"base_url": base_url._value}, source=base_url.source)
         for k, v in attributes.items():
             # make sure to use the raw property value (v._value),
@@ -1169,7 +1169,7 @@ class Settings:
             k: v for k, v in settings.__dict__.items() if isinstance(v, Property)
         }
         base_url = attributes.pop("base_url", None)
-        if base_url._value is not None:
+        if base_url and base_url._value is not None:
             self.update({"base_url": base_url._value}, source=base_url.source)
 
         for k, v in attributes.items():
