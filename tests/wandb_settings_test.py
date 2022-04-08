@@ -979,18 +979,12 @@ def test_program_python_m():
         assert "-m module.lib" in output.decode("utf-8")
 
 
-<<<<<<< HEAD
-def test_local_api_key_validation():
-    with pytest.raises(UsageError):
-        wandb.Settings(api_key="local-87eLxjoRhY6u2ofg63NAJo7rVYHZo4NGACOvpSsF",)
-=======
 @pytest.mark.skip(reason="Unskip once api_key validation is restored")
 def test_local_api_key_validation():
     with pytest.raises(UsageError):
         wandb.Settings(
             api_key="local-87eLxjoRhY6u2ofg63NAJo7rVYHZo4NGACOvpSsF",
         )
->>>>>>> 272ce0aed8610df9e012b4645d00bac96d90d188
     s = wandb.Settings(
         api_key="local-87eLxjoRhY6u2ofg63NAJo7rVYHZo4NGACOvpSsF",
         base_url="https://api.wandb.test",
