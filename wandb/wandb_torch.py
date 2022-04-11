@@ -11,7 +11,7 @@ from wandb import util
 from wandb.data_types import Node
 import wandb
 
-torch = None
+from typing import Tuple, Optional, List
 
 
 def nested_shape(array_or_tuple, seen=None):
@@ -70,69 +70,110 @@ class TorchHistory:
     def __init__(self):
         global torch
         torch = wandb.util.get_module("torch", "Could not import torch")
+
         self._hook_handles = {}
         self._num_bins = 64
         self._is_cuda_histc_supported = None
         self.hook_torch = TorchGraph.hook_torch
 
-    def add_log_hooks_to_pytorch_module(
+    def add_log_parameters_hook(
         self,
-        module,
-        name=None,
-        prefix="",
-        log_parameters=True,
-        log_gradients=True,
-        log_freq=0,
-    ):
-        """This instuments hooks into the pytorch module
-        log_parameters - log parameters after a forward pass
-        log_gradients - log gradients after a backward pass
+        module: "torch.Module",
+        name: Optional[str] = None,
+        prefix: str = "",
+        log_freq: int = 0,
+    ) -> None:
+        """This instuments hooks into the pytorch module log parameters after a forward pass
         log_freq - log gradients/parameters every N batches
         """
         if name is not None:
             prefix = prefix + name
+        prefix = f"parameters/{prefix}"
 
         if not hasattr(module, "_wandb_hook_names"):
             module._wandb_hook_names = []
 
-        if log_parameters:
-
-            def parameter_log_hook(module, input_, output, log_track):
-                if not log_track_update(log_track):
-                    return
-                for name, parameter in module.named_parameters():
-                    # for pytorch 0.3 Variables
-                    if isinstance(parameter, torch.autograd.Variable):
-                        data = parameter.data
-                    else:
-                        data = parameter
-                    self.log_tensor_stats(data.cpu(), "parameters/" + prefix + name)
-
-            log_track_params = log_track_init(log_freq)
-            hook = module.register_forward_hook(
-                lambda mod, inp, outp: parameter_log_hook(
-                    mod, inp, outp, log_track_params
-                )
-            )
-            self._hook_handles["parameters/" + prefix] = hook
-            module._wandb_hook_names.append("parameters/" + prefix)
-
-        if log_gradients:
+        def parameter_log_hook_helper(
+            module,
+            input: Tuple[torch.Tensor],
+            output: torch.Tensor,
+            log_track: List[int],
+        ) -> None:
+            if not log_track_update(log_track):
+                return
             for name, parameter in module.named_parameters():
-                if parameter.requires_grad:
-                    log_track_grad = log_track_init(log_freq)
-                    module._wandb_hook_names.append("gradients/" + prefix + name)
-                    self._hook_variable_gradient_stats(
-                        parameter, "gradients/" + prefix + name, log_track_grad
-                    )
+                # for pytorch 0.3 Variables
+                if isinstance(parameter, torch.autograd.Variable):
+                    data = parameter.data
+                else:
+                    data = parameter
+                self.log_tensor_stats(data.cpu(), prefix + name)
+
+        log_track_params = log_track_init(log_freq)
+
+        @torch.jit.ignore
+        def parameter_log_hook(module, input: Tuple[torch.Tensor], output):
+            return parameter_log_hook_helper(module, input, output, log_track_params)
+
+        self._hook_handles[prefix] = module.register_forward_hook(parameter_log_hook)
+        module._wandb_hook_names.append(prefix)
+
+    def add_log_gradients_hook(
+        self,
+        module: "torch.Module",
+        name: Optional[str] = None,
+        prefix: str = "",
+        log_freq: int = 0,
+    ) -> None:
+        """This instuments hooks into the pytorch module log gradients after a backward pass
+        log_freq - log gradients/parameters every N batches
+        """
+        if name is not None:
+            prefix = prefix + name
+        prefix = f"gradients/{prefix}"
+
+        if not hasattr(module, "_wandb_hook_names"):
+            module._wandb_hook_names = []
+
+        log_track_grad = log_track_init(log_freq)
+
+        for name, parameter in module.named_parameters():
+            if parameter.requires_grad:
+                module._wandb_hook_names.append(prefix + name)
+                self._hook_variable_gradient_stats(
+                    parameter, prefix + name, log_track_grad
+                )
+
+    def _hook_variable_gradient_stats(self, var, name, log_track):
+        """Logs a Variable's gradient's distribution statistics next time backward()
+        is called on it.
+        """
+        if not isinstance(var, torch.autograd.Variable):
+            cls = type(var)
+            raise TypeError(
+                f"Expected torch.Variable, not {cls.__module__}.{cls.__name__}"
+            )
+
+        handle = self._hook_handles.get(name)
+        if handle is not None and self._torch_hook_handle_is_valid(handle):
+            raise ValueError(f'A hook has already been set under name "{name}"')
+
+        def _callback(grad, log_track):
+            if not log_track_update(log_track):
+                return
+            self.log_tensor_stats(grad.data, name)
+
+        handle = var.register_hook(lambda grad: _callback(grad, log_track))
+        self._hook_handles[name] = handle
+        return handle
 
     def log_tensor_stats(self, tensor, name):
         """Add distribution statistics on a tensor's elements to the current History entry"""
         # TODO Handle the case of duplicate names.
 
-        if isinstance(tensor, tuple) or isinstance(tensor, list):
-            while (isinstance(tensor, tuple) or isinstance(tensor, list)) and (
-                isinstance(tensor[0], tuple) or isinstance(tensor[0], list)
+        if isinstance(tensor, (tuple, list)):
+            while isinstance(tensor, (tuple, list)) and isinstance(
+                tensor[0], (tuple, list)
             ):
                 tensor = [item for sublist in tensor for item in sublist]
             tensor = torch.cat([t.reshape(-1) for t in tensor])
@@ -239,31 +280,6 @@ class TorchHistory:
             {name: wandb.Histogram(np_histogram=(tensor.tolist(), bins.tolist()))},
             commit=False,
         )
-
-    def _hook_variable_gradient_stats(self, var, name, log_track):
-        """Logs a Variable's gradient's distribution statistics next time backward()
-        is called on it.
-        """
-        if not isinstance(var, torch.autograd.Variable):
-            cls = type(var)
-            raise TypeError(
-                "Expected torch.Variable, not {}.{}".format(
-                    cls.__module__, cls.__name__
-                )
-            )
-
-        handle = self._hook_handles.get(name)
-        if handle is not None and self._torch_hook_handle_is_valid(handle):
-            raise ValueError(f'A hook has already been set under name "{name}"')
-
-        def _callback(grad, log_track):
-            if not log_track_update(log_track):
-                return
-            self.log_tensor_stats(grad.data, name)
-
-        handle = var.register_hook(lambda grad: _callback(grad, log_track))
-        self._hook_handles[name] = handle
-        return handle
 
     def unhook_all(self):
         for handle in self._hook_handles.values():
