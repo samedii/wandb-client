@@ -1,7 +1,6 @@
 """watch."""
 
 import logging
-import os
 from typing import Optional, TYPE_CHECKING
 
 import wandb

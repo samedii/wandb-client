@@ -135,10 +135,9 @@ class TorchHistory:
         if not hasattr(module, "_wandb_hook_names"):
             module._wandb_hook_names = []
 
-        log_track_grad = log_track_init(log_freq)
-
         for name, parameter in module.named_parameters():
             if parameter.requires_grad:
+                log_track_grad = log_track_init(log_freq)
                 module._wandb_hook_names.append(prefix + name)
                 self._hook_variable_gradient_stats(
                     parameter, prefix + name, log_track_grad
