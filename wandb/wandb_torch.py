@@ -11,10 +11,10 @@ from wandb import util
 from wandb.data_types import Node
 import wandb
 
-from typing import Tuple, Optional, List
+from typing import List, Optional, Set, Tuple, Union
 
 
-def nested_shape(array_or_tuple, seen=None):
+def nested_shape(array_or_tuple, seen: Optional[Set] = None):
     """Figures out the shape of tensors possibly embedded in tuples
     i.e
     [0,0] returns (2)
@@ -48,14 +48,14 @@ def nested_shape(array_or_tuple, seen=None):
 LOG_TRACK_COUNT, LOG_TRACK_THRESHOLD = range(2)
 
 
-def log_track_init(log_freq):
+def log_track_init(log_freq: int):
     """create tracking structure used by log_track_update"""
     l = [0] * 2
     l[LOG_TRACK_THRESHOLD] = log_freq
     return l
 
 
-def log_track_update(log_track):
+def log_track_update(log_track: List[int]):
     """count (log_track[0]) up to threshold (log_track[1]), reset count (log_track[0]) and return true when reached"""
     log_track[LOG_TRACK_COUNT] += 1
     if log_track[LOG_TRACK_COUNT] < log_track[LOG_TRACK_THRESHOLD]:
@@ -78,28 +78,28 @@ class TorchHistory:
 
     def add_log_parameters_hook(
         self,
-        module: "torch.Module",
-        name: Optional[str] = None,
+        module: "torch.nn.Module",
+        name: str = "",
         prefix: str = "",
         log_freq: int = 0,
     ) -> None:
         """This instuments hooks into the pytorch module log parameters after a forward pass
         log_freq - log gradients/parameters every N batches
         """
-        if name is not None:
-            prefix = prefix + name
-        prefix = f"parameters/{prefix}"
 
         if not hasattr(module, "_wandb_hook_names"):
             module._wandb_hook_names = []
 
-        def parameter_log_hook_helper(
+        prefix = f"parameters/{prefix}{name}"
+        log_track_params = log_track_init(log_freq)
+
+        @torch.jit.ignore
+        def parameter_log_hook(
             module,
             input: Tuple[torch.Tensor],
             output: torch.Tensor,
-            log_track: List[int],
         ) -> None:
-            if not log_track_update(log_track):
+            if not log_track_update(log_track_params):
                 return
             for name, parameter in module.named_parameters():
                 # for pytorch 0.3 Variables
@@ -109,41 +109,33 @@ class TorchHistory:
                     data = parameter
                 self.log_tensor_stats(data.cpu(), prefix + name)
 
-        log_track_params = log_track_init(log_freq)
-
-        @torch.jit.ignore
-        def parameter_log_hook(module, input: Tuple[torch.Tensor], output):
-            return parameter_log_hook_helper(module, input, output, log_track_params)
-
         self._hook_handles[prefix] = module.register_forward_hook(parameter_log_hook)
         module._wandb_hook_names.append(prefix)
 
     def add_log_gradients_hook(
         self,
-        module: "torch.Module",
-        name: Optional[str] = None,
+        module: "torch.nn.Module",
+        name: str = "",
         prefix: str = "",
         log_freq: int = 0,
     ) -> None:
         """This instuments hooks into the pytorch module log gradients after a backward pass
         log_freq - log gradients/parameters every N batches
         """
-        if name is not None:
-            prefix = prefix + name
-        prefix = f"gradients/{prefix}"
+        prefix = f"gradients/{prefix}{name}"
+        log_track_grad = log_track_init(log_freq)
 
         if not hasattr(module, "_wandb_hook_names"):
             module._wandb_hook_names = []
 
         for name, parameter in module.named_parameters():
             if parameter.requires_grad:
-                log_track_grad = log_track_init(log_freq)
                 module._wandb_hook_names.append(prefix + name)
                 self._hook_variable_gradient_stats(
                     parameter, prefix + name, log_track_grad
                 )
 
-    def log_tensor_stats(self, tensor, name):
+    def log_tensor_stats(self, tensor: Union["torch.Tensor", Tuple, List], name: str):
         """Add distribution statistics on a tensor's elements to the current History entry"""
         # TODO Handle the case of duplicate names.
 
@@ -257,7 +249,9 @@ class TorchHistory:
             commit=False,
         )
 
-    def _hook_variable_gradient_stats(self, var, name, log_track):
+    def _hook_variable_gradient_stats(
+        self, var: "torch.Tensor", name: str, log_track: List[int]
+    ):
         """Logs a Variable's gradient's distribution statistics next time backward()
         is called on it.
         """
@@ -280,21 +274,20 @@ class TorchHistory:
         self._hook_handles[name] = handle
         return handle
 
-    def unhook_all(self):
+    def unhook_all(self) -> None:
         for handle in self._hook_handles.values():
             handle.remove()
         self._hook_handles = []
 
-    def unhook(self, name):
+    def unhook(self, name: str) -> None:
         handle = self._hook_handles.pop(name)
         handle.remove()
 
-    def _torch_hook_handle_is_valid(self, handle):
+    def _torch_hook_handle_is_valid(
+        self, handle: "torch.utils.hooks.RemovableHandle"
+    ) -> bool:
         d = handle.hooks_dict_ref()
-        if d is None:
-            return False
-        else:
-            return handle.id in d
+        return d is not None and handle.id in d
 
     def _no_finite_values(self, tensor: "torch.Tensor") -> bool:
         return tensor.shape == torch.Size([0]) or (~torch.isfinite(tensor)).all().item()
