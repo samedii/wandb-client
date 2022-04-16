@@ -14,7 +14,9 @@ import wandb
 from typing import List, Optional, Set, Tuple, Union
 
 
-def nested_shape(array_or_tuple, seen: Optional[Set] = None):
+def nested_shape(
+    array_or_tuple: Union[List, Tuple], seen: Optional[Set] = None
+) -> Union[List, Tuple]:
     """Figures out the shape of tensors possibly embedded in tuples
     i.e
     [0,0] returns (2)
@@ -45,23 +47,15 @@ def nested_shape(array_or_tuple, seen: Optional[Set] = None):
         return []
 
 
-LOG_TRACK_COUNT, LOG_TRACK_THRESHOLD = range(2)
-
-
-def log_track_init(log_freq: int):
+def log_track_init(log_freq: int) -> List[int]:
     """create tracking structure used by log_track_update"""
-    l = [0] * 2
-    l[LOG_TRACK_THRESHOLD] = log_freq
-    return l
+    return [0, log_freq]
 
 
-def log_track_update(log_track: List[int]):
+def log_track_update(log_track: List[int]) -> bool:
     """count (log_track[0]) up to threshold (log_track[1]), reset count (log_track[0]) and return true when reached"""
-    log_track[LOG_TRACK_COUNT] += 1
-    if log_track[LOG_TRACK_COUNT] < log_track[LOG_TRACK_THRESHOLD]:
-        return False
-    log_track[LOG_TRACK_COUNT] = 0
-    return True
+    log_track[0] = (log_track[0] + 1) % log_track[1]
+    return log_track[0] == 0
 
 
 class TorchHistory:
@@ -123,13 +117,13 @@ class TorchHistory:
         log_freq - log gradients/parameters every N batches
         """
         prefix = f"gradients/{prefix}{name}"
-        log_track_grad = log_track_init(log_freq)
 
         if not hasattr(module, "_wandb_hook_names"):
             module._wandb_hook_names = []
 
         for name, parameter in module.named_parameters():
             if parameter.requires_grad:
+                log_track_grad = log_track_init(log_freq)
                 module._wandb_hook_names.append(prefix + name)
                 self._hook_variable_gradient_stats(
                     parameter, prefix + name, log_track_grad

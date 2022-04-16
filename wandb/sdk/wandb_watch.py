@@ -8,7 +8,7 @@ import wandb
 from .lib import telemetry
 
 if TYPE_CHECKING:
-    import torch
+    import torch  # type: ignore
 
 logger = logging.getLogger("wandb")
 
@@ -16,13 +16,13 @@ _global_watch_idx = 0
 
 
 def watch(
-    models: "torch.Module",
+    models: Union[Tuple["torch.nn.Module"], List["torch.nn.Module"], "torch.nn.Module"],
     criterion: Optional["torch.nn.functional"] = None,
     log: Optional[str] = "gradients",
     log_freq: int = 1000,
     idx: Optional[int] = None,
     log_graph: bool = False,
-):
+) -> List["wandb.Graph"]:
     """Hooks into the torch model to collect gradients and the topology.
 
     Should be extended to accept arbitrary ML models.
@@ -99,7 +99,7 @@ def unwatch(
     models: Optional[
         Union[Tuple["torch.nn.Module"], List["torch.nn.Module"], "torch.nn.Module"]
     ] = None
-):
+) -> None:
     """Remove pytorch model topology, gradient and parameter hooks.
 
     Args:
@@ -113,9 +113,10 @@ def unwatch(
                 wandb.termwarn(f"{model} model has not been watched")
             else:
                 for name in model._wandb_hook_names:
-                    wandb.run._torch.unhook(name)
+                    if wandb.run:
+                        wandb.run._torch.unhook(name)
                 delattr(model, "_wandb_hook_names")
                 # TODO: we should also remove recursively model._wandb_watch_called
 
-    else:
+    elif wandb.run:
         wandb.run._torch.unhook_all()
