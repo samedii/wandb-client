@@ -6,16 +6,17 @@
 from functools import reduce
 import itertools
 from operator import mul
-from typing import List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TYPE_CHECKING, Union
 
 import wandb
 from wandb import util
 from wandb.data_types import Node
 
+if TYPE_CHECKING:
+    import torch  # type: ignore
 
-def nested_shape(
-    array_or_tuple: Union[List, Tuple], seen: Optional[Set] = None
-) -> Union[List, Tuple]:
+
+def nested_shape(array_or_tuple: Any, seen: Optional[Set] = None) -> List:
     """Figures out the shape of tensors possibly embedded in tuples
     i.e
     [0,0] returns (2)
@@ -29,9 +30,9 @@ def nested_shape(
         return list(array_or_tuple.size())
     elif hasattr(array_or_tuple, "get_shape"):
         # tensorflow uses V.get_shape() to get size of tensor
-        return array_or_tuple.get_shape().as_list()
+        return list(array_or_tuple.get_shape().as_list())
     elif hasattr(array_or_tuple, "shape"):
-        return array_or_tuple.shape
+        return list(array_or_tuple.shape)
 
     seen.add(id(array_or_tuple))
     try:
@@ -60,14 +61,14 @@ def log_track_update(log_track: List[int]) -> bool:
 class TorchHistory:
     """History methods specific to PyTorch"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         global torch
         torch = wandb.util.get_module("torch", "Could not import torch")
 
-        self._hook_handles = {}
-        self._num_bins = 64
-        self._is_cuda_histc_supported = None
-        self.hook_torch = TorchGraph.hook_torch
+        self._hook_handles: Dict[str, "torch.utils.hooks.RemovableHandle"] = {}
+        self._num_bins: int = 64
+        self._is_cuda_histc_supported: Optional[bool] = None
+        self.hook_torch: Callable = TorchGraph.hook_torch
 
     def add_log_parameters_hook(
         self,
@@ -86,11 +87,11 @@ class TorchHistory:
         prefix = f"parameters/{prefix}{name}"
         log_track_params = log_track_init(log_freq)
 
-        @torch.jit.ignore
+        # @torch.jit.ignore
         def parameter_log_hook(
-            module,
-            input: Tuple[torch.Tensor],
-            output: torch.Tensor,
+            module: "torch.nn.Module",
+            input: Tuple["torch.Tensor"],
+            output: "torch.Tensor",
         ) -> None:
             if not log_track_update(log_track_params):
                 return
@@ -136,10 +137,13 @@ class TorchHistory:
                 )
 
     def log_tensor_stats(  # noqa: C901
-        self, tensor: Union["torch.Tensor", Tuple, List], name: str
-    ):
+        self,
+        tensor: Union["torch.Tensor", Tuple["torch.Tensor"], List["torch.Tensor"]],
+        name: str,
+    ) -> None:
         """Add distribution statistics on a tensor's elements to the current History entry"""
         # TODO Handle the case of duplicate names.
+        assert wandb.run is not None
 
         if isinstance(tensor, (tuple, list)):
             while isinstance(tensor, (tuple, list)) and isinstance(
@@ -253,7 +257,7 @@ class TorchHistory:
 
     def _hook_variable_gradient_stats(
         self, var: "torch.Tensor", name: str, log_track: List[int]
-    ):
+    ) -> "torch.utils.hooks.RemovableHandle":
         """Logs a Variable's gradient's distribution statistics next time backward()
         is called on it.
         """
@@ -267,7 +271,7 @@ class TorchHistory:
         if handle is not None and self._torch_hook_handle_is_valid(handle):
             raise ValueError(f'A hook has already been set under name "{name}"')
 
-        def _callback(grad, log_track):
+        def _callback(grad: "torch.Tensor", log_track: List[int]) -> None:
             if not log_track_update(log_track):
                 return
             self.log_tensor_stats(grad.data, name)
@@ -279,7 +283,7 @@ class TorchHistory:
     def unhook_all(self) -> None:
         for handle in self._hook_handles.values():
             handle.remove()
-        self._hook_handles = []
+        self._hook_handles = {}
 
     def unhook(self, name: str) -> None:
         handle = self._hook_handles.pop(name)
@@ -292,7 +296,9 @@ class TorchHistory:
         return d is not None and handle.id in d
 
     def _no_finite_values(self, tensor: "torch.Tensor") -> bool:
-        return tensor.shape == torch.Size([0]) or (~torch.isfinite(tensor)).all().item()
+        return tensor.shape == torch.Size([0]) or bool(
+            (~torch.isfinite(tensor)).all().item()
+        )
 
     def _remove_infs_nans(self, tensor: "torch.Tensor") -> "torch.Tensor":
         if not torch.isfinite(tensor).all():
@@ -302,21 +308,30 @@ class TorchHistory:
 
 
 class TorchGraph(wandb.data_types.Graph):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("torch")
-        self._graph_hooks = set()
+        self._graph_hooks: Set = set()
 
     @classmethod
-    def hook_torch(cls, model, criterion=None, graph_idx=0):
+    def hook_torch(
+        cls,
+        model: "torch.nn.Module",
+        criterion: Optional["torch.nn.functional"] = None,
+        graph_idx: int = 0,
+    ) -> "TorchGraph":
         wandb.termlog("logging graph, to disable use `wandb.watch(log_graph=False)`")
         graph = TorchGraph()
         graph.hook_torch_modules(model, criterion, graph_idx=graph_idx)
         return graph
 
-    def create_forward_hook(self, name, graph_idx):
+    def create_forward_hook(self, name: str, graph_idx: int) -> Callable:
         graph = self
 
-        def after_forward_hook(module, input, output):
+        def after_forward_hook(
+            module: "torch.nn.Module", input: "torch.Tensor", output: "torch.Tensor"
+        ) -> None:
+            assert wandb.run is not None
+
             if id(module) not in self._graph_hooks:
                 # hook already processed -> noop
                 return
@@ -354,13 +369,19 @@ class TorchGraph(wandb.data_types.Graph):
 
             if not self._graph_hooks:
                 # we went through the entire graph
-                wandb.run.summary["graph_%i" % graph_idx] = self
+                wandb.run.summary[f"graph_{graph_idx}"] = self
 
         return after_forward_hook
 
     def hook_torch_modules(
-        self, module, criterion=None, prefix=None, graph_idx=0, parent=None
-    ):
+        self,
+        module: "torch.nn.Module",
+        criterion: Optional["torch.nn.functional"] = None,
+        prefix: Optional[str] = None,
+        graph_idx: int = 0,
+        parent: Optional["torch.nn.Module"] = None,
+    ) -> None:
+        assert wandb.run is not None
         torch = util.get_module("torch", "Could not import torch")
         layers = 0
         graph = self
@@ -422,7 +443,9 @@ class TorchGraph(wandb.data_types.Graph):
                     )
 
     @classmethod
-    def from_torch_layers(cls, module_graph, variable):
+    def from_torch_layers(
+        cls, module_graph: "TorchGraph", variable: "torch.Tensor"
+    ) -> "TorchGraph":
         """Recover something like neural net layers from PyTorch Module's and the
         compute graph from a Variable.
 
@@ -451,9 +474,9 @@ class TorchGraph(wandb.data_types.Graph):
         names_by_pid = {id(n.obj): n.name for n in module_parameter_nodes}
 
         reachable_param_nodes = module_graph[0].reachable_descendents()
-        reachable_params = {}
-        module_reachable_params = {}
-        names = {}
+        reachable_params: Dict[int, Any] = {}
+        module_reachable_params: Dict[int, Any] = {}
+        names: Dict[str, Set[str]] = {}
         for pid, reachable_nodes in reachable_param_nodes.items():
             node = module_nodes_by_hash[pid]
             if not isinstance(node.obj, torch.nn.Module):
@@ -474,7 +497,7 @@ class TorchGraph(wandb.data_types.Graph):
         # graph
         node_depths = {id(n): d for n, d in module_graph[0].descendent_bfs()}
         parameter_module_names = {}
-        parameter_modules = {}
+        parameter_modules: Dict[int, Any] = {}
         for param_node in (
             n for n in module_graph.nodes if isinstance(n.obj, torch.nn.Parameter)
         ):
@@ -489,7 +512,7 @@ class TorchGraph(wandb.data_types.Graph):
                 reachable_params = module_reachable_params[id(module)]
                 if pid in reachable_params:
                     depth = node_depths[id(node)]
-                    if best_node is None or (len(reachable_params), depth) <= (
+                    if best_node is None or (len(reachable_params), depth) <= (  # type: ignore
                         len(best_reachable_params),
                         best_depth,
                     ):
@@ -498,6 +521,7 @@ class TorchGraph(wandb.data_types.Graph):
                         best_reachable_params = reachable_params
 
             parameter_modules[pid] = best_node
+            assert best_node is not None
             parameter_module_names[param_node.name] = best_node.name
 
         # contains all parameters but only a minimal set of modules necessary
@@ -507,11 +531,11 @@ class TorchGraph(wandb.data_types.Graph):
         rmg_root = Node(id=next(rmg_ids), node=module_graph[0])
         reduced_module_graph.add_node(rmg_root)
         reduced_module_graph.root = rmg_root
-        rmg_nodes_by_pid = {}
+        rmg_nodes_by_pid: Dict[int, Any] = {}
 
         module_nodes_by_pid = {id(n.obj): n for n in module_graph.nodes}
 
-        compute_graph, compute_node_vars = cls.from_torch_compute_graph(variable)
+        compute_graph, compute_node_vars = cls.from_torch_compute_graph(variable)  # type: ignore
         for node, _ in reversed(list(compute_graph[0].ancestor_bfs())):
             param = compute_node_vars.get(node.id)
             pid = id(param)
@@ -540,10 +564,10 @@ class TorchGraph(wandb.data_types.Graph):
         return reduced_module_graph
 
     @classmethod
-    def node_from_module(cls, nid, module):
+    def node_from_module(cls, nid: int, module: "torch.nn.Module") -> "Node":
         numpy = util.get_module("numpy", "Could not import numpy")
 
-        node = wandb.Node()
+        node = Node()
         node.id = nid
         node.child_parameters = 0
         for parameter in module.parameters():
