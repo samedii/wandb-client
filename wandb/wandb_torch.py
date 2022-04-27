@@ -6,6 +6,7 @@
 import itertools
 from functools import reduce
 from operator import mul
+from timeit import repeat
 
 from wandb import util
 from wandb.data_types import Node
@@ -103,8 +104,15 @@ class TorchHistory:
                     data = parameter
                 self.log_tensor_stats(data.cpu(), prefix + name)
 
-        self._hook_handles[prefix] = module.register_forward_hook(parameter_log_hook)
-        module._wandb_hook_names.append(prefix)
+        try:
+            self._hook_handles[prefix] = module.register_forward_hook(
+                parameter_log_hook
+            )
+            module._wandb_hook_names.append(prefix)
+        except RuntimeError as e:
+            wandb.termwarn(
+                f"Trying to register forward_hook failed ({e}) - skipping parameter tracking."
+            )
 
     def add_log_gradients_hook(
         self,
@@ -396,16 +404,22 @@ class TorchGraph(wandb.data_types.Graph):
                 self.hook_torch_modules(sub_module, prefix=name, parent=parent)
             else:
                 self._graph_hooks |= {id(sub_module)}
-                graph_hook = sub_module.register_forward_hook(
-                    self.create_forward_hook(name, graph_idx)
-                )
-                wandb.run._torch._hook_handles[
-                    "topology/" + str(id(graph_hook))
-                ] = graph_hook
-                if not hasattr(parent, "_wandb_hook_names"):
-                    # should never happen but let's be extra safe
-                    parent._wandb_hook_names = []
-                parent._wandb_hook_names.append("topology/" + str(id(graph_hook)))
+                try:
+                    graph_hook = sub_module.register_forward_hook(
+                        self.create_forward_hook(name, graph_idx)
+                    )
+                    wandb.run._torch._hook_handles[
+                        "topology/" + str(id(graph_hook))
+                    ] = graph_hook
+                    if not hasattr(parent, "_wandb_hook_names"):
+                        # should never happen but let's be extra safe
+                        parent._wandb_hook_names = []
+                    parent._wandb_hook_names.append("topology/" + str(id(graph_hook)))
+                except RuntimeError as e:
+                    wandb.termwarn(
+                        f"Trying to register forward_hook failed ({e}) - skipping graph tracking.",
+                        repeat=False,
+                    )
 
     @classmethod
     def from_torch_layers(cls, module_graph, variable):

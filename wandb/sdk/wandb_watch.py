@@ -51,8 +51,19 @@ def watch(
     if wandb.run is None:
         raise ValueError("You must call `wandb.init` before calling watch")
 
-    log_parameters = log in ["all", "parameters"]
-    log_gradients = log in ["all", "gradients"]
+    log_options = {
+        "all": (True, True),
+        "gradients": (True, False),
+        "parameters": (False, True),
+        None: (False, False),
+    }
+
+    if log not in log_options:
+        wandb.termwarn(
+            f"Expected `log` to be one of {list(log_options.keys())} instead got {log} - skipping watch"
+        )
+
+    log_gradients, log_parameters = log_options.get(log, (False, False))
 
     if not isinstance(models, (tuple, list)):
         models = (models,)
