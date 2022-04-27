@@ -3,16 +3,14 @@
 """PyTorch-specific functionality
 """
 
-import itertools
 from functools import reduce
+import itertools
 from operator import mul
-from timeit import repeat
+from typing import List, Optional, Set, Tuple, Union
 
+import wandb
 from wandb import util
 from wandb.data_types import Node
-import wandb
-
-from typing import List, Optional, Set, Tuple, Union
 
 
 def nested_shape(
@@ -137,7 +135,9 @@ class TorchHistory:
                     parameter, prefix + name, log_track_grad
                 )
 
-    def log_tensor_stats(self, tensor: Union["torch.Tensor", Tuple, List], name: str):
+    def log_tensor_stats(  # noqa: C901
+        self, tensor: Union["torch.Tensor", Tuple, List], name: str
+    ):
         """Add distribution statistics on a tensor's elements to the current History entry"""
         # TODO Handle the case of duplicate names.
 
@@ -183,10 +183,10 @@ class TorchHistory:
             # until then, we are going to have to catch a specific exception to check for histc support.
             if self._is_cuda_histc_supported is None:
                 self._is_cuda_histc_supported = True
-                check = torch.cuda.FloatTensor(1).fill_(0)
+                _ = torch.cuda.FloatTensor(1).fill_(0)
                 try:
-                    check = flat.histc(bins=self._num_bins)
-                except RuntimeError as e:
+                    _ = flat.histc(bins=self._num_bins)
+                except RuntimeError:
                     # Only work around missing support with specific exception
                     # if str(e).startswith("_th_histc is not implemented"):
                     #    self._is_cuda_histc_supported = False

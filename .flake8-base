@@ -17,7 +17,6 @@ exclude =
     .eggs
     ./functional_tests/metaflow/
     ./wandb/__init__.py
-    ./wandb/wandb_torch.py
     ./wandb/bin
     ./wandb/data/
     ./wandb/errors/
