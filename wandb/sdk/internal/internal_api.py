@@ -9,7 +9,7 @@ import datetime
 from io import BytesIO
 import json
 import os
-from pkg_resources import parse_version  # type: ignore
+from pkg_resources import parse_version
 import re
 import requests
 import logging
@@ -1548,7 +1548,7 @@ class Api:
         Returns:
             A tuple of the content length and the streaming response
         """
-        response = requests.get(url, stream=True)
+        response = requests.get(url, auth=("user", self.api_key), stream=True)
         response.raise_for_status()
         return (int(response.headers.get("content-length", 0)), response)
 
@@ -2258,12 +2258,9 @@ class Api:
         can_handle_dedupe = max_cli_version is None or parse_version(
             "0.12.10"
         ) <= parse_version(max_cli_version)
-        # can_handle_history = max_cli_version is None or parse_version(
-        #     "0.12.12"
-        # ) <= parse_version(max_cli_version)
-
-        # TODO: Re-enable history once gorilla is deployed with maxcli >= 0.12.12
-        can_handle_history = False
+        can_handle_history = max_cli_version is None or parse_version(
+            "0.12.12"
+        ) <= parse_version(max_cli_version)
 
         mutation = gql(
             """
