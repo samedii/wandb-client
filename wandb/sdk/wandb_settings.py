@@ -396,6 +396,7 @@ class Settings:
     anonymous: str
     api_key: str
     base_url: str  # The base url for the wandb api
+    cache_dir: str  # The directory to use for artifacts cache: <cache_dir>/artifacts
     code_dir: str
     config_paths: Sequence[str]
     console: str
@@ -523,6 +524,9 @@ class Settings:
                 "preprocessor": lambda x: str(x).strip().rstrip("/"),
                 "validator": self._validate_base_url,
             },
+            # cache_dir={
+            #     "value": os.path.expanduser(os.path.join("~", ".cache", "wandb")),
+            # },
             console={"value": "auto", "validator": self._validate_console},
             deployment={
                 "hook": lambda _: "local" if self.is_local else "cloud",

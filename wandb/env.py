@@ -10,11 +10,13 @@ Environment variables are not the authoritative source for
 these values in many cases.
 """
 
+from distutils.util import strtobool
+import json
 import os
 import sys
-import json
+from typing import Mapping, Optional
+
 import wandb
-from distutils.util import strtobool
 
 CONFIG_PATHS = "WANDB_CONFIG_PATHS"
 SWEEP_PARAM_PATH = "WANDB_SWEEP_PARAM_PATH"
@@ -299,12 +301,12 @@ def get_magic(default=None, env=None):
     return val
 
 
-def get_cache_dir(env=None):
+def get_cache_dir(env: Optional[Mapping] = None) -> str:
     default_dir = os.path.expanduser(os.path.join("~", ".cache", "wandb"))
     if env is None:
         env = os.environ
     val = env.get(CACHE_DIR, default_dir)
-    return val
+    return str(val)
 
 
 def get_use_v1_artifacts(env=None):
