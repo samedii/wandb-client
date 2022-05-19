@@ -1,27 +1,28 @@
 """Mock Server for simple calls the cli and public api make"""
 
-from flask import Flask, request, g, jsonify
-import os
-import sys
-import re
 from datetime import datetime, timedelta
-import json
-import platform
-import yaml
-import gzip
 import functools
+import gzip
+import json
+import logging
+import os
+import platform
+import re
+import sys
+import threading
 import time
+import urllib.parse
+
+from flask import Flask, request, g, jsonify
 import requests
 from werkzeug.exceptions import BadRequest
+import yaml
 
 # HACK: restore first two entries of sys path after wandb load
 save_path = sys.path[:2]
 import wandb
 
 sys.path[0:0] = save_path
-import logging
-import urllib
-import threading
 
 RequestsMock = None
 InjectRequestsParse = None
@@ -78,7 +79,7 @@ def default_ctx():
         "emulate_azure": False,
         "run_state": "running",
         "run_queue_item_check_count": 0,
-        "return_jupyter_in_run_info": False,
+        "run_script_type": "python",
         "alerts": [],
         "gorilla_supports_launch_agents": True,
         "launch_agents": {},
@@ -152,10 +153,14 @@ def run(ctx):
             "directUrl": base_url
             + "/storage?file=%s&direct=true" % ctx["requested_file"],
         }
-    if ctx["return_jupyter_in_run_info"]:
+    if ctx["run_script_type"] == "notebook":
         program_name = "one_cell.ipynb"
-    else:
+    elif ctx["run_script_type"] == "shell":
+        program_name = "test.sh"
+    elif ctx["run_script_type"] == "python":
         program_name = "train.py"
+    elif ctx["run_script_type"] == "unknown":
+        program_name = "unknown.unk"
     return {
         "id": "test",
         "name": "test",
@@ -377,7 +382,12 @@ class SnoopRelay:
                 url_path = request.path
                 body = request.get_json()
 
-                url = f"https://api.wandb.ai{url_path}"
+                base_url = os.environ.get(
+                    "MOCKSERVER_RELAY_REMOTE_BASE_URL",
+                    "https://api.wandb.ai",
+                )
+                url = urllib.parse.urljoin(base_url, url_path)
+
                 resp = requests.post(url, json=body)
                 data = resp.json()
                 run_obj = data.get("data", {}).get("upsertBucket", {}).get("bucket", {})
@@ -404,7 +414,7 @@ class SnoopRelay:
                         time.sleep(12)
                         raise HttpException("some error", status_code=500)
                 return data
-            assert False
+            assert False  # we do not support get requests yet, and likely never will :)
 
             return func(*args, **kwargs)
 
@@ -427,10 +437,16 @@ class SnoopRelay:
 
             # TODO: handle errors better
             try:
-                # NOTE: We are using wandb, but it isn't a strict dependency
                 import wandb
 
-                api = wandb.Api()
+                api = wandb.Api(
+                    overrides={
+                        "base_url": os.environ.get(
+                            "MOCKSERVER_RELAY_REMOTE_BASE_URL",
+                            "https://api.wandb.ai",
+                        )
+                    }
+                )
                 run = api.run(f"{run_info['entity']}/{run_info['project']}/{run_id}")
             except Exception as e:
                 print(f"ERROR: problem calling public api for run {run_id}", e)
@@ -493,7 +509,7 @@ def create_app(user_ctx=None):
             ctx = snoop.context_enrich(ctx)
             return json.dumps(ctx)
         elif request.method == "DELETE":
-            app.logger.info("reseting context")
+            app.logger.info("resetting context")
             set_ctx(default_ctx())
             return json.dumps(get_ctx())
         else:
@@ -1836,10 +1852,14 @@ def create_app(user_ctx=None):
                     },
                 }
         elif file == "wandb-metadata.json":
-            if ctx["return_jupyter_in_run_info"]:
+            if ctx["run_script_type"] == "notebook":
                 code_path = "one_cell.ipynb"
-            else:
+            elif ctx["run_script_type"] == "shell":
+                code_path = "test.sh"
+            elif ctx["run_script_type"] == "python":
                 code_path = "train.py"
+            elif ctx["run_script_type"] == "unknown":
+                code_path = "unknown.unk"
             result = {
                 "docker": "test/docker",
                 "program": "train.py",

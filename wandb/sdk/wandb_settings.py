@@ -375,6 +375,8 @@ class Settings:
     _jupyter_path: str
     _jupyter_root: str
     _kaggle: bool
+    _live_policy_rate_limit: int
+    _live_policy_wait_time: int
     _noop: bool
     _offline: bool
     _os: str
@@ -410,6 +412,7 @@ class Settings:
     heartbeat_seconds: int
     host: str
     ignore_globs: Tuple[str]
+    init_timeout: int
     is_local: bool
     label_disable: bool
     launch: bool
@@ -541,6 +544,7 @@ class Settings:
                 "value": tuple(),
                 "preprocessor": lambda x: tuple(x) if not isinstance(x, tuple) else x,
             },
+            init_timeout={"value": 30, "preprocessor": lambda x: int(x)},
             is_local={
                 "hook": (
                     lambda _: self.base_url != "https://api.wandb.ai"
@@ -1313,7 +1317,6 @@ class Settings:
             _logger.info(
                 f"Loading settings from environment variables: {_redact_dict(env)}"
             )
-
         self.update(env, source=Source.ENV)
 
     def _infer_settings_from_environment(
@@ -1381,7 +1384,8 @@ class Settings:
         if os.path.exists("/usr/local/cuda/version.txt"):
             with open("/usr/local/cuda/version.txt") as f:
                 settings["_cuda"] = f.read().split(" ")[-1].strip()
-        settings["_args"] = sys.argv[1:]
+        if not self._jupyter:
+            settings["_args"] = sys.argv[1:]
         settings["_os"] = platform.platform(aliased=True)
         settings["_python"] = platform.python_version()
         # hack to make sure we don't hang on windows
